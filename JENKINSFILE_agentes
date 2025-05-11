@@ -1,0 +1,90 @@
+pipeline {
+    agent none
+
+    stages {
+        stage('Hello') {
+            agent { label 'windows' }
+            steps {
+                echo 'Hola desde Jenkins Alejandro Ortiz'
+                bat 'echo %USERDOMAIN%\\%USERNAME%'
+                bat 'hostname'
+            }
+        }
+
+        stage('Checkout') {
+            agent { label 'linux' }
+            steps {
+                git 'https://github.com/alex19bh/helloworld.git'
+                sh 'ls -la'
+                sh 'echo $WORKSPACE'
+                sh 'whoami'
+                sh 'hostname'
+                stash name: 'source-code', includes: '**/*'
+            }
+        }
+
+        stage('Build') {
+            agent { label 'windows' }
+            steps {
+                echo 'No hay que hacer build porque es Python'
+                bat 'echo %USERDOMAIN%\\%USERNAME%'
+                bat 'hostname'
+                unstash 'source-code'
+            }
+        }
+
+        stage('Pruebas') { 
+            parallel {
+                stage('Unit') {
+                    agent { label 'linux' }
+                    steps {
+                        unstash 'source-code'
+                        sh '''
+                            export PYTHONPATH=$WORKSPACE
+                            pytest --junitxml=result-unit.xml $WORKSPACE/test/unit
+                        '''
+                        sh 'whoami'
+                        sh 'hostname'
+                        stash name: 'test-results', includes: 'result-unit.xml'
+                    }
+                }
+                
+                stage('Service') {
+                    agent { label 'linux' }
+                    steps {
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                            unstash 'source-code'
+                            sh '''
+                                export FLASK_APP=$WORKSPACE/app/api.py
+                                export FLASK_ENV=development
+                                nohup flask run 2>&1 &
+                                nohup java -jar $WORKSPACE/wiremock/wiremock-standalone-3.13.0.jar --port 9090 --root-dir $WORKSPACE/wiremock/ 2>&1 & 
+                                # Esperar a que el puerto 9090 esté disponible (máx 15s)
+                                for i in {1..15}; do
+                                curl -s http://localhost:9090/__admin/ | grep -q mappings && break
+                                echo "Esperando a que WireMock inicie..."
+                                sleep 1
+                                done                    
+                                export PYTHONPATH=$WORKSPACE
+                                pytest --junitxml=result-service.xml $WORKSPACE/test/rest                   
+                            '''
+                        }
+                        sh 'whoami'
+                        sh 'hostname'
+                        stash name: 'test-results', includes: 'result-service.xml'
+                    }
+                }
+            }
+        }
+        
+        stage('Resultados') {
+            agent { label 'windows' }
+            steps {
+                unstash 'test-results'
+                junit 'result*.xml'
+                bat 'echo %USERDOMAIN%\\%USERNAME%'
+                bat 'hostname'
+            }
+        }
+    }
+}
