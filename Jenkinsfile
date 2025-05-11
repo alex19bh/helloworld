@@ -1,16 +1,19 @@
 pipeline {
-    agent any
-
+    agent {
+        label 'maestro'
+    }
+    
     stages {
         stage('Hello') {
             steps {
                 echo 'Hola desde Jenkins Alejandro Ortiz'
+                sh 'whoami'
+                echo '$HOSTNAME'
             }
         }
 
         stage('Checkout') {
             steps {
-                git 'https://github.com/alex19bh/helloworld.git'
                 sh 'ls -la'
                 sh 'echo $WORKSPACE'
             }
@@ -63,3 +66,4 @@ pipeline {
         }
     }
 }
+
