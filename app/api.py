@@ -40,15 +40,18 @@ def multiply(op_1, op_2):
     except TypeError as e:
         return (str(e), http.client.BAD_REQUEST, HEADERS)
 
-
 # Ruta para división
 @api_application.route("/calc/divide/<op_1>/<op_2>", methods=["GET"])
 def divide(op_1, op_2):
     try:
         num_1, num_2 = util.convert_to_number(op_1), util.convert_to_number(op_2)
+        
+        if num_2 == 0:
+            return ("Division by zero is not possible", http.client.NOT_ACCEPTABLE, HEADERS)  # HTTP 406
+
         return ("{}".format(CALCULATOR.divide(num_1, num_2)), http.client.OK, HEADERS)
     except ZeroDivisionError as e:
-        return (str(e), http.client.BAD_REQUEST, HEADERS)
+        return (str(e), http.client.NOT_ACCEPTABLE, HEADERS)  # Cambio a HTTP 406 en caso de error
     except TypeError as e:
         return (str(e), http.client.BAD_REQUEST, HEADERS)
 
