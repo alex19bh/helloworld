@@ -1,0 +1,10 @@
+Name                     Stmts   Miss  Cover
+--------------------------------------------
+app/__init__.py              0      0   100%
+app/calc.py                 24      1    96%
+app/util.py                  7      0   100%
+test/unit/__init__.py        0      0   100%
+test/unit/calc_test.py      52      0   100%
+test/unit/util_test.py      20      0   100%
+--------------------------------------------
+TOTAL                      103      1    99%

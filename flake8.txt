@@ -1,0 +1,9 @@
+./app/api.py:21:80: E501 line too long (81 > 79 characters)
+./app/api.py:22:80: E501 line too long (83 > 79 characters)
+./app/api.py:30:80: E501 line too long (81 > 79 characters)
+./app/api.py:31:80: E501 line too long (89 > 79 characters)
+./app/calc.py:1:1: F401 'app' imported but unused
+./app/calc.py:24:18: E271 multiple spaces after keyword
+./app/calc.py:24:80: E501 line too long (110 > 79 characters)
+./app/calc.py:33:46: E271 multiple spaces after keyword
+./app/calc.py:33:80: E501 line too long (125 > 79 characters)
