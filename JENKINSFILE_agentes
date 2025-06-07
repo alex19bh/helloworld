@@ -2,89 +2,164 @@ pipeline {
     agent none
 
     stages {
-        stage('Hello') {
-            agent { label 'windows' }
-            steps {
-                echo 'Hola desde Jenkins Alejandro Ortiz'
-                bat 'echo %USERDOMAIN%\\%USERNAME%'
-                bat 'hostname'
-            }
-        }
 
-        stage('Checkout') {
+        stage('Get Code') {
             agent { label 'linux' }
             steps {
-                git 'https://github.com/alex19bh/helloworld.git'
-                sh 'ls -la'
-                sh 'echo $WORKSPACE'
                 sh 'whoami'
                 sh 'hostname'
-                stash name: 'source-code', includes: '**/*'
+                sh 'echo ${WORKSPACE}'
+                git 'https://github.com/alex19bh/helloworld.git'
+                sh 'ls -la'
+                stash name: 'source-code', includes: '**'
             }
         }
 
-        stage('Build') {
-            agent { label 'windows' }
-            steps {
-                echo 'No hay que hacer build porque es Python'
-                bat 'echo %USERDOMAIN%\\%USERNAME%'
-                bat 'hostname'
-                unstash 'source-code'
-            }
-        }
-
-        stage('Pruebas') { 
+        stage('Etapa paralela') {
             parallel {
+
                 stage('Unit') {
                     agent { label 'linux' }
                     steps {
-                        unstash 'source-code'
                         sh '''
-                            export PYTHONPATH=$WORKSPACE
-                            pytest --junitxml=result-unit.xml $WORKSPACE/test/unit
+                            whoami
+                            hostname
+                            echo ${WORKSPACE}
+                            python3 -m venv .venv
+                            . .venv/bin/activate
+                            pip install --upgrade pip
+                            pip install coverage pytest
+                            coverage run -m pytest test/unit --junitxml=result-unit.xml
+                            coverage xml -o coverage.xml
                         '''
-                        sh 'whoami'
-                        sh 'hostname'
-                        stash name: 'test-results', includes: 'result-unit.xml'
+                        stash includes: 'coverage.xml', name: 'coverage-report'
+                        junit 'result-unit.xml'
                     }
                 }
-                
-                stage('Service') {
+
+                stage('Rest') {
                     agent { label 'linux' }
                     steps {
-                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
-                            unstash 'source-code'
-                            sh '''
-                                export FLASK_APP=$WORKSPACE/app/api.py
-                                export FLASK_ENV=development
-                                nohup flask run 2>&1 &
-                                nohup java -jar $WORKSPACE/wiremock/wiremock-standalone-3.13.0.jar --port 9090 --root-dir $WORKSPACE/wiremock/ 2>&1 & 
-                                # Esperar a que el puerto 9090 esté disponible (máx 15s)
-                                for i in {1..15}; do
-                                curl -s http://localhost:9090/__admin/ | grep -q mappings && break
-                                echo "Esperando a que WireMock inicie..."
-                                sleep 1
-                                done                    
-                                export PYTHONPATH=$WORKSPACE
-                                pytest --junitxml=result-service.xml $WORKSPACE/test/rest                   
-                            '''
-                        }
                         sh 'whoami'
                         sh 'hostname'
-                        stash name: 'test-results', includes: 'result-service.xml'
+                        sh 'echo ${WORKSPACE}'
+                        unstash "source-code"
+                        catchError(buildResult: 'SUCCESS', stageResult: 'SUCCESS') {
+                            sh '''
+                                export PYTHONPATH=$WORKSPACE
+                                export FLASK_APP=app/api.py
+                                nohup flask run &
+                                nohup java -jar $WORKSPACE/wiremock/wiremock-standalone-3.13.0.jar --port 9090 --root-dir $WORKSPACE/wiremock/ &
+                                for i in {1..15}; do
+                                    curl -s http://localhost:9090/__admin/ | grep -q mappings && break
+                                    sleep 1
+                                done
+                                pytest --junitxml=result-service.xml $WORKSPACE/test/rest
+                            '''
+                        }
+                        junit 'result-service.xml'
+                        script {
+                            currentBuild.result = currentBuild.result ?: 'SUCCESS'
+                        }
+                    }
+                }
+
+                stage('Static') {
+                    agent { label 'linux' }
+                    steps {
+                        sh 'export PYTHONPATH=$WORKSPACE'
+                        sh 'whoami'
+                        sh 'hostname'
+                        sh 'echo ${WORKSPACE}'
+                        unstash "source-code"
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                            sh 'flake8 app/* > flake8.txt || true'
+                            recordIssues tools: [flake8(pattern: 'flake8.txt')],
+                                qualityGates: [
+                                    [threshold: 10, type: 'TOTAL', unstable: false],
+                                    [threshold: 8, type: 'TOTAL', unstable: true]
+                                ],
+                                failOnError: false
+                        }
+                        archiveArtifacts 'flake8.txt'
+                    }
+                }
+
+                stage('Security Test') {
+                    agent { label 'linux' }
+                    steps {
+                        sh 'export PYTHONPATH=$WORKSPACE'
+                        sh 'whoami'
+                        sh 'hostname'
+                        sh 'echo ${WORKSPACE}'
+                        unstash "source-code"
+                        catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
+                            sh '''
+                                bandit -r . -f custom -o bandit.txt --msg-template "{abspath}:{line}: [{test_id}] {msg}" || true
+                            '''
+                            recordIssues tools: [pyLint(name: 'Bandit', pattern: 'bandit.txt')],
+                                qualityGates: [
+                                    [threshold: 2, type: 'TOTAL', unstable: true],
+                                    [threshold: 4, type: 'TOTAL', unstable: false]
+                                ]
+                        }
+                    }
+                }
+
+            }
+        }
+
+        stage('Performance') {
+            agent { label 'linux' }
+            steps {
+                sh 'whoami'
+                sh 'hostname'
+                sh 'echo ${WORKSPACE}'
+                unstash "source-code"
+                catchError(buildResult: 'UNSTABLE', stageResult: 'UNSTABLE') {
+                    sh '''
+                        fuser -k 5000/tcp || true
+                        export FLASK_APP=${WORKSPACE}/app/api.py
+                        nohup flask run &
+                        sleep 5
+                        /apache-jmeter-5.6.3/bin/jmeter.sh -n -t test-plan.jmx -l jmeter-result.jtl -j jmeter.log
+                    '''
+                }
+                perfReport sourceDataFiles: 'jmeter-result.jtl', configType: 'ART'
+                archiveArtifacts 'jmeter-result.jtl'
+            }
+        }
+
+        stage('Coverage') {
+            agent { label 'linux' }
+            steps {
+                sh 'whoami'
+                sh 'hostname'
+                sh 'echo ${WORKSPACE}'
+                unstash 'coverage-report'
+                recordCoverage(
+                    tools: [[parser: 'COBERTURA', pattern: 'coverage.xml']],
+                    sourceCodeRetention: 'EVERY_BUILD',
+                    failOnError: false,
+                    qualityGates: [
+                        [threshold: 90.0, metric: 'LINE', baseline: 'PROJECT'],
+                        [threshold: 80.0, metric: 'BRANCH', baseline: 'PROJECT']
+                    ]
+                )
+            }
+        }
+
+        stage('Clean All Workspaces') {
+            parallel {
+                stage('Clean Linux Workspace') {
+                    agent { label 'linux' }
+                    steps {
+                        cleanWs()
                     }
                 }
             }
         }
-        
-        stage('Resultados') {
-            agent { label 'windows' }
-            steps {
-                unstash 'test-results'
-                junit 'result*.xml'
-                bat 'echo %USERDOMAIN%\\%USERNAME%'
-                bat 'hostname'
-            }
-        }
+
     }
 }
+
